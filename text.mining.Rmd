@@ -41,7 +41,7 @@ docs[[2]]$content # double brackets to get metadata on second tweet; $content (o
 clean_corpus <- function(corpus){
   corpus <- tm_map(corpus, removePunctuation)
   corpus <- tm_map(corpus, content_transformer(tolower)) # use content_transformer when using base R functions like tolower()
-  corpus <- tm_map(corpus, removeWords, c(stopwords("en"), "hannah guedenet", "media","omit", "charles"))
+  corpus <- tm_map(corpus, removeWords, c(stopwords("en"), "hannah guedenet", "media","omit", "charles","omitted"))
   corpus <- tm_map(corpus, stripWhitespace)
   corpus <- tm_map(corpus, removeNumbers)
   #corpus <- tm_map(corpus, stemDocument)
@@ -69,6 +69,10 @@ clean_corp[[22]]$content
 ## create TermDocumentMatrix (TDM) or DocumentTermMatrix (DTM) to get frequency matrices of corpus
 ```{r}
 qual_tdm <- TermDocumentMatrix(clean_corp)
+dim(qual_tdm)
+inspect(qual_tdm[1:5,1:6])
+
+#use RemoveSparseTerms()
 
 ## convert dtm to matrix so that it's easier to look at and manipulate
 qualtdm_matrix <- as.matrix(qual_tdm)
@@ -114,9 +118,10 @@ library(wordcloud)
 # create word cloud with three colors (red and gray provide a good contrast for high and low freq words)
 wordcloud(freqTermsdf$term, 
           freqTermsdf$num,
-          max.words = 25,
+          min.freq = 100,
           scale = c(3,.9), # indicates the range of the size of the words
-          colors = brewer.pal(8, "Dark2"))
+          colors = brewer.pal(8, "Dark2"),
+          random.order = FALSE) # random order places terms with highest frequency in the middle
 
 # load the viridisLite package. The viridisLite color schemes are perceptually-uniform, both in regular form and when converted to black-and-white.
 # The colors are also designed to be perceived by readers with color blindness.
@@ -124,9 +129,10 @@ library(viridisLite)
 color_pal <- viridis(n=5)
 wordcloud(freqTermsdf$term, 
           freqTermsdf$num,
-          max.words = 25,
+          min.freq = 100,
           scale = c(3, .9),
-          colors = color_pal)
+          colors = color_pal,
+          random.order = FALSE)
 ```
 
 #compare number of messages by author
@@ -176,10 +182,10 @@ CG <- texts2 %>% filter(author == "Charles G")
 #Find common words and create a commonality cloud
 ```{r}
 #Say you want to visualize common words across multiple documents. You can do this with commonality.cloud().
-#Each of our coffee and chardonnay corpora is composed of many individual tweets.
-#To treat the coffee tweets as a single document and likewise for chardonnay, 
-#you paste() together all the tweets in each corpus along with the parameter collapse = " ".
-#This collapses all tweets (separated by a space) into a single vector. Then you
+#Each of our HG and CG corpora is composed of many individual messages
+#To treat the HG Messages as a single document and likewise for CG, 
+#you paste() together all the messages in each corpus along with the parameter collapse = " ".
+#This collapses all messages (separated by a space) into a single vector. Then you
 #can create a single vector containing all documents.
 
 collapse <- paste(clean_corp, collapse = " ")
@@ -207,13 +213,75 @@ all_tdm <- TermDocumentMatrix(all_clean)
 
 # Create all_m
 all_m <- as.matrix(all_tdm)
-head(all_m$terms)
+head(all_m)
 
 # Print a commonality cloud
-commonality.cloud(all_m, max.words = 25,
-                  colors = "steelblue1",
+color_pal <- viridis(n=8)
+commonality.cloud(all_m, max.words = 20,
+                  colors = color_pal,
                   scale = c(3,.5))
 ```
+
+#using tidytext to compare HG and CG messaging
+```{r}
+#unnest tokens (separate all messages into words) and summarize by author
+compare <- texts2 %>%
+  na.omit() %>%
+  unnest_tokens(input = "text",
+                output = "word") %>%
+  count(author, word, sort = TRUE) %>%
+  group_by(author) %>%
+  filter(!word %in% c(Top200Words,"omit","i'm","it's","don't","media","omitted")) %>%
+  top_n(n = 10)
+
+# create facet bar charts
+ggplot(compare, aes(x = reorder(word, n), y = n, fill = author)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  ylab("") +
+  xlab("") +
+  coord_flip() +
+  facet_wrap(~author, ncol = 2, scales = "free_y") +
+  ggtitle("Most often used words") +
+  theme_bw()
+```
+
+#create a pyramid chart
+```{r}
+# The words contained in each document.
+# The counts of those words from document 1.
+# The counts of those words from document 2
+# Keep rows where word appears everywhere
+
+pyr <- texts2 %>%
+  na.omit(.) %>%
+  unnest_tokens(input = "text", output = "word") %>%
+  count(author, word, sort = TRUE) %>% data.frame() %>%
+  spread(author,n)
+
+str(pyr)
+
+filter_all(all_vars(. > 0)) %>% 
+  # Get difference in counts
+  mutate(difference = chardonnay - coffee) %>% 
+  # Keep rows with biggest difference
+  top_n(25, wt = difference) %>% 
+  # Arrange by descending difference
+  arrange(desc(difference))
+
+pyramid.plot(
+  # Chardonnay counts
+  top25_df$chardonnay, 
+  # Coffee counts
+  top25_df$coffee, 
+  # Words
+  labels = top25_df$word, 
+  top.labels = c("Chardonnay", "Words", "Coffee"), 
+  main = "Words in Common", 
+  unit = NULL,
+  gap = 8,
+)
+```
+
 
 # DISSIMILAR COMPARISON CLOUD
 ##Say you want to visualize the words not in common. To do this, you can also use comparison.cloud() 
